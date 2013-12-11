@@ -1,4 +1,4 @@
 syslog_viewer
 =============
 
-Syslog viewer
+Frontend for Syslog-NG written in Perl
