@@ -74,6 +74,27 @@ sub load_logs
     $self->{_logs} = ($logs eq "") ? "No Results." : $logs;
 }
 
+sub load_programs
+{
+    my $self = shift;
+    my $cgi  = $self->{_cgi};
+    my $db   = $self->{_db};
+    my $host = $cgi->param("host");
+    my $sth;
+
+    $sth = $db->prepare("SELECT DISTINCT `program` FROM `logs` WHERE `host` = '$host'");
+  
+    $sth->execute() or return 0;
+    my @programs;
+
+    while (my @row = $sth->fetchrow_array())
+    {
+        push @programs, $row[0]
+    }
+
+    $self->{_programs} = \@programs;
+}
+
 sub load_data
 {
     my $self = shift;
@@ -86,6 +107,7 @@ sub load_data
     my @hosts;
     my @row;
 
+    push @hosts, "";
     while (@row = $sth->fetchrow_array())
     {
         push @hosts, $row[0]
@@ -93,19 +115,16 @@ sub load_data
 
     $self->{_hosts} = \@hosts;
 
-    $sth = $db->prepare("SELECT DISTINCT `program` FROM `logs`");
   
-    $sth->execute() or return 0;
-    my @programs;
-
-    while (@row = $sth->fetchrow_array())
+    if ($cgi->param("view_logs"))
     {
-        push @programs, $row[0]
+        $self->load_logs();
     }
-
-    $self->{_programs} = \@programs;
-
-    $self->load_logs() if ($cgi->param("view_logs"));
+    
+    if ($cgi->param("host"))
+    {
+        $self->load_programs();
+    }
 
     return 1;
 }
@@ -148,7 +167,7 @@ sub _load_selection_table
     my $self     = shift;
     my $cgi      = $self->{_cgi};
     my @hosts    = @{$self->{_hosts}};
-    my @programs = @{$self->{_programs}};
+    my @programs = ($self->{_programs}) ? @{$self->{_programs}} : ();
 
     print $cgi->start_Tr();
     print $cgi->td("Host");
@@ -158,8 +177,9 @@ sub _load_selection_table
     print $cgi->start_Tr();
     print $cgi->start_td();
     print $cgi->popup_menu(
-        -name    => "host",
-        -values  => \@hosts
+        -name     => "host",
+        -values   => \@hosts,
+        -onchange => "document.syslog.submit();"
     );
     print $cgi->end_td();
 
@@ -198,7 +218,7 @@ sub start
     $self->print_title();
 
     print $cgi->start_form(
-        -name    => 'syslog',
+        -name    => "syslog",
         -method  => 'POST',
         -enctype => &CGI::URL_ENCODED,
         -action  => "index.cgi"
