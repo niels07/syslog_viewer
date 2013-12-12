@@ -20,8 +20,8 @@ sub new
 
     print $cgi->header();
     print $cgi->start_html(
-        -title  => "Webline Syslog",
-		-base   => 'true',
+        -title  => "Syslog Viewer",
+        -base   => 'true',
     );
     
     my $db = DBI->connect(          
