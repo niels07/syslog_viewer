@@ -16,26 +16,29 @@ my %CONFIG = (
 sub new
 {
     my $class = shift;
-    my $cgi = new CGI();
+    my $cgi   = new CGI();
 
     print $cgi->header();
     print $cgi->start_html(
         -title  => "Syslog Viewer",
         -base   => 'true',
     );
-    
+    my $dbname = ($cgi->param("date") and $cgi->param("date") ne "now") ? 
+                  $cgi->param("date") : 
+                  $CONFIG{"db_name"};
+
     my $db = DBI->connect(          
-        "dbi:mysql:" . $CONFIG{"db_name"},
+        "dbi:mysql:" . $dbname,
         $CONFIG{"db_user"},
         $CONFIG{"db_pass"},
     )
     or die $DBI::errstr;
-
     my $self = {
         _db        => $db,
         _cgi       => $cgi,
         _hosts     => undef,
         _programs  => undef,
+        _dates     => undef,
         _logs      => "",
         _query     => ""
     };
@@ -49,27 +52,24 @@ sub load_logs
     my $self    = shift;
     my $db      = $self->{_db};
     my $cgi     = $self->{_cgi};
-    
     my $host    = $cgi->param("host");
     my $program = $cgi->param("program");
     my $grep    = $cgi->param("grep");
     my $limit   = $cgi->param("limit");
 
     my $query = "SELECT `msg` FROM `logs`";
-
     $query .= " WHERE `host` = '$host' AND `program` = '$program'";
     $query .= " AND `msg` LIKE '%$grep%'" if ($grep ne "");
     $query .= " LIMIT $limit" if ($limit =~ /^[0-9,.E]+$/);
     
     $self->{_query} = $query;
-
     my $sth = $db->prepare($query);
     $sth->execute() or return;
 
-    my $logs = "";
+    my $logs;
     while (my @row = $sth->fetchrow_array())
     {
-        $logs .= $row[0] . "<br />";
+        $logs .= $row[0] . $cgi->br();
     }
     $self->{_logs} = ($logs eq "") ? "No Results." : $logs;
 }
@@ -95,17 +95,34 @@ sub load_programs
     $self->{_programs} = \@programs;
 }
 
+sub load_dates
+{
+    my $self = shift;
+    my $cgi  = $self->{_cgi};
+    my $db   = $self->{_db};
+    my $host = $cgi->param("host");
+    my (@dates, $sth);
+
+    $sth = $db->prepare("SHOW DATABASES WHERE `Database` LIKE '%-%-%'");
+    $sth->execute() or return 0;
+    push @dates, "now";
+
+    while (my @row = $sth->fetchrow_array())
+    {
+        push @dates, $row[0]
+    }
+    $self->{_dates} = \@dates;
+}
+
 sub load_data
 {
     my $self = shift;
     my $cgi  = $self->{_cgi};
     my $db   = $self->{_db};
-    my $sth;
+    my (@hosts, @row, $sth);
 
     $sth = $db->prepare("SELECT DISTINCT `host` FROM `logs`");
     $sth->execute() or return 0;
-    my @hosts;
-    my @row;
 
     push @hosts, "";
     while (@row = $sth->fetchrow_array())
@@ -115,16 +132,9 @@ sub load_data
 
     $self->{_hosts} = \@hosts;
 
-  
-    if ($cgi->param("view_logs"))
-    {
-        $self->load_logs();
-    }
-    
-    if ($cgi->param("host"))
-    {
-        $self->load_programs();
-    }
+    $self->load_dates();
+    $self->load_logs()     if ($cgi->param("view_logs"));
+    $self->load_programs() if ($cgi->param("host"));
 
     return 1;
 }
@@ -168,10 +178,12 @@ sub _load_selection_table
     my $cgi      = $self->{_cgi};
     my @hosts    = @{$self->{_hosts}};
     my @programs = ($self->{_programs}) ? @{$self->{_programs}} : ();
+    my @dates    = @{$self->{_dates}};
 
     print $cgi->start_Tr();
     print $cgi->td("Host");
     print $cgi->td("Program");
+    print $cgi->td("Date");
     print $cgi->end_Tr();
 
     print $cgi->start_Tr();
@@ -190,6 +202,14 @@ sub _load_selection_table
     );
     print $cgi->end_td();
 
+    print $cgi->start_td();
+    print $cgi->popup_menu(
+        -name     => "date",
+        -values   => \@dates,
+        -onchange => "document.syslog.submit();"
+    );
+    print $cgi->end_td();
+
     print $cgi->end_Tr();
     print $cgi->end_table();
 }
@@ -198,15 +218,13 @@ sub print_title
 {
     my $self = shift;
     my $cgi  = $self->{_cgi};
-    print $cgi->div(
-        { 
-            -style => "width: 100%; height: 40px;" .
-                      "border-bottom: 1px solid black;" .
-                      "margin-bottom: 10px;" .
-                      "font-weight: bold"
-        },
-        "Syslog viewer"
-    );
+
+    print $cgi->div({ 
+        -style => "width: 100%; height: 40px;" .
+                  "border-bottom: 1px solid black;" .
+                  "margin-bottom: 10px;" .
+                  "font-weight: bold"
+    }, "Syslog viewer");
 }
 
 sub start
@@ -223,7 +241,6 @@ sub start
         -enctype => &CGI::URL_ENCODED,
         -action  => "index.cgi"
     );
-
     $self->_load_settings_table();
     $self->_load_selection_table();
     print $cgi->submit(
@@ -238,13 +255,10 @@ sub start
     );
     print $cgi->end_p();
 
-    print $cgi->div(
-        {
-            -style => "border-top: 1px solid black;".
-                      "padding-top: 10px;"
-        },
-        $logs
-    );
+    print $cgi->div({
+        -style => "border-top: 1px solid black;".
+                  "padding-top: 10px;"
+    }, $logs);
 
     print $cgi->end_form();
     print $cgi->end_html();
