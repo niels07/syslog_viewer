@@ -1,6 +1,8 @@
-syslog_viewer
+Syslog_viewer
 =============
 
-Frontend for Syslog-NG written in Perl
+Version 0.3
 
-Version 0.2
+Frontend for Syslog-NG written in Perl.
+Change the database details in SvConf.pm and rotate_syslog.sh
+

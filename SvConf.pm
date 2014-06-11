@@ -1,13 +1,13 @@
  #!/usr/bin/perl -w
 
-package Svconfig;
+package SvConf;
 
 use strict;
 use warnings;
 
 use Exporter;
 
-our @ISA = qw/ Exporter /;
+our @ISA    = qw(Exporter);
 our @EXPORT = qw(opt);
 
 my %config = (

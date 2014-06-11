@@ -2,13 +2,12 @@
 use strict;
 use warnings;
 use CGI;
-require "syslog.pm";
+require "Syslog.pm";
 
 sub main
 {
     my $syslog = new Syslog();
-
-    $syslog->load_data() or exit 1;
+    $syslog->load_data();
     $syslog->start();
 }
 

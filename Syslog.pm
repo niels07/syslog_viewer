@@ -5,144 +5,88 @@ use strict;
 use warnings;
 use CGI;
 use DBI;
+use SvConf;
 
-my %CONFIG = (
-    "db_host" => "localhost",
-    "db_user" => "logger",
-    "db_pass" => "<PASS>",
-    "db_name" => "syslog"
-);
-
-sub new
+sub _fatal
 {
-    my $class = shift;
-    my $cgi   = new CGI();
-
-    print $cgi->header();
-    print $cgi->start_html(
-        -title  => "Syslog Viewer",
-        -base   => 'true',
+    my ($self, $msg) = @_;
+  
+    print $self->{_cgi}->header();
+    print $self->{_cgi}->start_html(
+        -title  => "Syslog Error",
+        -base   => "true",
     );
-    my $dbname = ($cgi->param("date") and $cgi->param("date") ne "now") ? 
-                  $cgi->param("date") : 
-                  $CONFIG{"db_name"};
-
-    my $db = DBI->connect(          
-        "dbi:mysql:" . $dbname,
-        $CONFIG{"db_user"},
-        $CONFIG{"db_pass"},
-    )
-    or die $DBI::errstr;
-    my $self = {
-        _db        => $db,
-        _cgi       => $cgi,
-        _hosts     => undef,
-        _programs  => undef,
-        _dates     => undef,
-        _logs      => "",
-        _query     => ""
-    };
-
-    bless $self, $class;
-    return $self;
+    print "SYSLOG ERROR: $msg";
+    print $self->{_cgi}->end_html();
+    exit 1;
 }
 
-sub load_logs
-{
-    my $self    = shift;
-    my $db      = $self->{_db};
-    my $cgi     = $self->{_cgi};
-    my $host    = $cgi->param("host");
-    my $program = $cgi->param("program");
-    my $grep    = $cgi->param("grep");
-    my $limit   = $cgi->param("limit");
-
-    my $query = "SELECT `msg` FROM `logs`";
-    $query .= " WHERE `host` = '$host' AND `program` = '$program'";
-    $query .= " AND `msg` LIKE '%$grep%'" if ($grep ne "");
-    $query .= " LIMIT $limit" if ($limit =~ /^[0-9,.E]+$/);
-    
-    $self->{_query} = $query;
-    my $sth = $db->prepare($query);
-    $sth->execute() or return;
-
-    my $logs;
-    while (my @row = $sth->fetchrow_array())
-    {
-        $logs .= $row[0] . $cgi->br();
-    }
-    $self->{_logs} = ($logs eq "") ? "No Results." : $logs;
-}
-
-sub load_programs
+sub _load_database
 {
     my $self = shift;
-    my $cgi  = $self->{_cgi};
-    my $db   = $self->{_db};
-    my $host = $cgi->param("host");
-    my $sth;
+    my $date = $self->{_cgi}->param("date");
 
-    $sth = $db->prepare("SELECT DISTINCT `program` FROM `logs` WHERE `host` = '$host'");
+    my $name = (($date and $date eq "now") or not $date) ? SvConf::opt("db_name") : $date;
+
+    $self->{_db} = DBI->connect("dbi:mysql:" . $name, SvConf::opt("db_user"), SvConf::opt("db_pass"))
+        or $self->_fatal("failed to connect to database: $DBI::errstr");
+}
+
+sub _load_facilities
+{
+    my $self = shift;
+    my $host = $self->{_cgi}->param("host");
+
+   $self->_fatal("'host' missing in POST") unless ($host);
+
+    my $sth = $self->{_db}->prepare(
+        "SELECT DISTINCT `facility` FROM `logs` WHERE `host` = '$host'"
+    );
   
     $sth->execute() or return 0;
-    my @programs;
+    my @fclt;
 
-    while (my @row = $sth->fetchrow_array())
-    {
-        push @programs, $row[0]
+    while (my @row = $sth->fetchrow_array()) {
+        push @fclt, $row[0]
     }
 
-    $self->{_programs} = \@programs;
+    $self->{_fclt} = \@fclt;
 }
 
-sub load_dates
+sub _load_dates
 {
     my $self = shift;
-    my $cgi  = $self->{_cgi};
-    my $db   = $self->{_db};
-    my $host = $cgi->param("host");
     my (@dates, $sth);
 
-    $sth = $db->prepare("SHOW DATABASES WHERE `Database` LIKE '%-%-%'");
-    $sth->execute() or return 0;
+    $sth = $self->{_db}->prepare("SHOW DATABASES WHERE `Database` LIKE '%-%-%'");
+    $sth->execute() or $self->_fatal("query failed");
     push @dates, "now";
 
-    while (my @row = $sth->fetchrow_array())
-    {
+    while (my @row = $sth->fetchrow_array()) {
         push @dates, $row[0]
     }
     $self->{_dates} = \@dates;
 }
 
-sub load_data
+sub _load_hosts
 {
     my $self = shift;
-    my $cgi  = $self->{_cgi};
-    my $db   = $self->{_db};
-    my (@hosts, @row, $sth);
+    my (@hosts, $sth);
+    
+    $sth = $self->{_db}->prepare("SELECT DISTINCT `host` FROM `logs`");
+    $sth->execute() or $self->_fatal("query failed");
 
-    $sth = $db->prepare("SELECT DISTINCT `host` FROM `logs`");
-    $sth->execute() or return 0;
-
-    push @hosts, "";
-    while (@row = $sth->fetchrow_array())
-    {
+    while (my @row = $sth->fetchrow_array()) {
         push @hosts, $row[0]
     }
 
     $self->{_hosts} = \@hosts;
-
-    $self->load_dates();
-    $self->load_logs()     if ($cgi->param("view_logs"));
-    $self->load_programs() if ($cgi->param("host"));
-
-    return 1;
 }
 
 sub _load_settings_table
 {
-    my $self     = shift;
-    my $cgi      = $self->{_cgi};
+    my $self = shift;
+    my $cgi  = $self->{_cgi};
 
     print $cgi->start_table();
     print $cgi->start_Tr();
@@ -177,12 +121,12 @@ sub _load_selection_table
     my $self     = shift;
     my $cgi      = $self->{_cgi};
     my @hosts    = @{$self->{_hosts}};
-    my @programs = ($self->{_programs}) ? @{$self->{_programs}} : ();
+    my @fclt     = ($self->{_fclt}) ? @{$self->{_fclt}} : ();
     my @dates    = @{$self->{_dates}};
 
     print $cgi->start_Tr();
     print $cgi->td("Host");
-    print $cgi->td("Program");
+    print $cgi->td("Facility");
     print $cgi->td("Date");
     print $cgi->end_Tr();
 
@@ -197,8 +141,8 @@ sub _load_selection_table
 
     print $cgi->start_td();
     print $cgi->popup_menu(
-        -name    => "program",
-        -values  => \@programs
+        -name    => "fclt",
+        -values  => \@fclt
     );
     print $cgi->end_td();
 
@@ -214,17 +158,84 @@ sub _load_selection_table
     print $cgi->end_table();
 }
 
-sub print_title
+sub _load_logs
+{
+    my $self    = shift;
+    my (%params, $logs, $sth);
+
+    foreach my $key (qw(host fclt grep limit)) {
+        my $param = $self->{_cgi}->param($key);
+
+        if ($param) { 
+            $params{$key} = $param;
+        }
+        elsif ($key =~ /^(host|fclt)$/) {
+            $self->_fatal("'$key' missing in POST");
+        }
+    }
+
+    $self->{_query}  = "SELECT `datetime`, `msg` FROM `logs` ";
+    $self->{_query} .= "WHERE  `host` = '"     . $params{'host'}    . "' ";
+    $self->{_query} .= "AND    `facility` = '" . $params{'fclt'} . "' ";
+    $self->{_query} .= "AND     `msg` LIKE '%" . $params{'grep'}    . "%' " if ($params{'grep'} ne "");
+    $self->{_query} .= "ORDER BY `datetime` DESC ";
+    $self->{_query} .= "LIMIT " . $params{'limit'} . " " if ($params{'limit'} =~ /^[0-9,.E]+$/);
+    
+    $sth = $self->{_db}->prepare($self->{_query});
+    $sth->execute() or $self->_fatal("failed to execute query: '$self->{_query}'");
+
+    while (my @row = $sth->fetchrow_array()) {
+        next if ($row[1] eq "");
+        $row[1] =~ s/</&lt;/g;
+        $row[1] =~ s/>/&gt;/g;
+        $logs .= $self->{_cgi}->start_Tr();
+        $logs .= $self->{_cgi}->td($row[0]);
+        $logs .= $self->{_cgi}->td($row[1]);
+        $logs .= $self->{_cgi}->end_Tr();
+    }
+
+    $self->{_logs} = ($logs eq "") 
+        ? "No Results." 
+        : $self->{_cgi}->start_table() . $logs . $self->{_cgi}->end_table();
+}
+
+sub _title
 {
     my $self = shift;
-    my $cgi  = $self->{_cgi};
-
-    print $cgi->div({ 
+    return $self->{_cgi}->div({ 
         -style => "width: 100%; height: 40px;" .
                   "border-bottom: 1px solid black;" .
                   "margin-bottom: 10px;" .
                   "font-weight: bold"
     }, "Syslog viewer");
+}
+
+sub new
+{
+    my $class = shift;
+    my $self = {
+        _db        => undef,
+        _cgi       => new CGI(),
+        _hosts     => undef,
+        _fclt      => undef,
+        _dates     => undef,
+        _logs      => "",
+        _query     => ""
+    };
+
+    bless $self, $class;
+    return $self;
+}
+
+sub load_data
+{
+    my $self = shift;
+
+    $self->_load_database();
+    $self->_load_hosts();
+    $self->_load_dates();
+    $self->_load_logs() if ($self->{_cgi}->param("view_logs"));
+    $self->_load_facilities() if ($self->{_cgi}->param("host"));
 }
 
 sub start
@@ -233,7 +244,13 @@ sub start
     my $cgi  = $self->{_cgi};
     my $logs = $self->{_logs};
 
-    $self->print_title();
+    print $self->{_cgi}->header();
+    print $self->{_cgi}->start_html(
+        -title  => "Syslog Viewer",
+        -base   => "true",
+    );
+
+    print $self->_title();
 
     print $cgi->start_form(
         -name    => "syslog",
@@ -247,7 +264,9 @@ sub start
         -name  => "view_logs" ,
         -value => "view"
     );
-    print $cgi->start_p();
+    print $cgi->start_p({
+        -style => "font: 12px Pragmata,Courier,monospace;"
+    });
     print "Query executed: ";
     print $cgi->span(
         { -style => "color: blue; font-weight: bold;" },
@@ -257,11 +276,12 @@ sub start
 
     print $cgi->div({
         -style => "border-top: 1px solid black;".
-                  "padding-top: 10px;"
+                  "padding-top: 10px;" .
+                  "font: 10px Pragmata,Courier,monospace;"
     }, $logs);
 
     print $cgi->end_form();
     print $cgi->end_html();
 }
 
-return 1;
+1;

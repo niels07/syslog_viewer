@@ -1,16 +1,30 @@
 #!/bin/sh
-name=`date +%y-%m-%d`
-pass="<PASS>" 
+#
+# rotate_syslog.sh ~ script to create a new syslog table 
+# and rename the old one
+#
 
-mysqldump   -u root -p$pass syslog > backup.sql
-mysql       -u root -p$pass -e "DROP DATABASE syslog; CREATE DATABASE \`$name\`"
-mysql       -u root -p$pass "$name" < backup.sql
+# For cronjobs
+PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/games:/usr/local/sbin:/usr/local/bin:/root/bin
+
+# Name today's database based on date format.
+DB_NAME=`date +%y-%m-%d`
+
+# Password for root user.
+ROOT_PASS="<PASS>" 
+
+# Password for syslog user (logger)
+USER_PASS="<PASS>"
+
+mysqldump   -u root -p"$ROOT_PASS" syslog > backup.sql
+mysql       -u root -p"$ROOT_PASS" -e "DROP DATABASE syslog; CREATE DATABASE IF NOT EXISTS \`$DB_NAME\`"
+mysql       -u root -p"$ROOT_PASS" "$DB_NAME" < backup.sql
 rm backup.sql
 
-mysql -u root -p$pass -e "
-CREATE DATABASE syslog;
+mysql -u root -p$ROOT_PASS -e "
+CREATE DATABASE IF NOT EXISTS syslog;
 USE syslog;
-CREATE TABLE logs (
+CREATE TABLE IF NOT EXISTS logs (
     host varchar(255) default NULL,
     facility varchar(255) default NULL,
     priority varchar(255) default NULL,
@@ -28,6 +42,6 @@ CREATE TABLE logs (
     KEY priority (priority),
     KEY facility (facility)
 );
-grant insert, select on syslog.* to logger@localhost identified by '<PASS>';
-grant insert, select on \`$name\`.* to logger@localhost identified by '<PASS>';"
+grant insert, select on syslog.* to logger@localhost identified by '$USER_PASS';
+grant insert, select on \`$DB_NAME\`.* to logger@localhost identified by '$USER_PASS';"
 exit $?
